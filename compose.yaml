@@ -1,0 +1,65 @@
+# 開発用の Docker Compose 構成（NFR-11: フロントエンド・API・DB を Docker Compose で起動する）
+# 設定値は .env から読み込む。.env は .env.example をコピーして作成し、Git にはコミットしない（NFR-04）。
+name: osushi-system
+
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?.env に MYSQL_ROOT_PASSWORD を設定してください}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?.env に MYSQL_DATABASE を設定してください}
+      MYSQL_USER: ${MYSQL_USER:?.env に MYSQL_USER を設定してください}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?.env に MYSQL_PASSWORD を設定してください}
+      TZ: Asia/Tokyo
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "${DB_PORT:-3307}:3306"
+    volumes:
+      # NFR-07: コンテナを作り直してもデータが残るよう、名前付きボリュームに保存する
+      - db-data:/var/lib/mysql
+      # 初回起動時（ボリュームが空のとき）だけ、db/init 内の .sql をファイル名順に実行する
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  backend:
+    build: ./backend
+    environment:
+      # DB 接続処理は後続タスクで実装する。接続先の情報だけ先に渡しておく。
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Tokyo
+      # Windows/Mac からのマウントでもコード変更時に自動リロードされるようにする
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    environment:
+      VITE_USE_POLLING: "true"
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      # node_modules はイメージ内のものを使う（ホスト側の node_modules で上書きしない）
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  db-data:
