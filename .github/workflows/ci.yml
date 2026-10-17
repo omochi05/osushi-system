@@ -1,4 +1,4 @@
-# CI（NFR-12: 型検査・ビルド・バックエンドテストを実行する）
+# CI（NFR-12: lint・型検査・ビルド・バックエンドテストを実行する）
 #
 # frontend/ と backend/ の雛形は後続タスクで作成する。
 # それまでは対象ファイルが無いジョブのチェックをスキップし、
@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: Frontend（型検査・ビルド）
+    name: Frontend（lint・型検査・ビルド）
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -38,7 +38,7 @@ jobs:
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Frontend チェックをスキップ::frontend/package.json が無いため、型検査・ビルドを実行していません"
+            echo "::notice title=Frontend チェックをスキップ::frontend/package.json が無いため、lint・型検査・ビルドを実行していません"
           fi
 
       # Node のバージョンは frontend/.nvmrc で管理する（要件定義書: バージョンは実装開始時に確定）
@@ -54,6 +54,11 @@ jobs:
         if: steps.detect.outputs.exists == 'true'
         run: npm ci
 
+      # 書き方の問題は数秒で分かるため、時間のかかる型検査・ビルドより先に実行する
+      - name: lint
+        if: steps.detect.outputs.exists == 'true'
+        run: npm run lint
+
       - name: 型検査
         if: steps.detect.outputs.exists == 'true'
         run: npm run typecheck
@@ -63,7 +68,7 @@ jobs:
         run: npm run build
 
   backend:
-    name: Backend（テスト）
+    name: Backend（lint・テスト）
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -79,7 +84,7 @@ jobs:
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Backend チェックをスキップ::backend/requirements.txt が無いため、テストを実行していません"
+            echo "::notice title=Backend チェックをスキップ::backend/requirements.txt が無いため、lint・テストを実行していません"
           fi
 
       # Python のバージョンは backend/.python-version で管理する
@@ -94,6 +99,15 @@ jobs:
       - name: 依存関係のインストール
         if: steps.detect.outputs.exists == 'true'
         run: pip install -r requirements.txt
+
+      # ルールは backend/ruff.toml で管理する。テストより先に実行し、書き方の問題を早く検出する
+      - name: lint
+        if: steps.detect.outputs.exists == 'true'
+        run: ruff check .
+
+      - name: フォーマットチェック
+        if: steps.detect.outputs.exists == 'true'
+        run: ruff format --check .
 
       # `pytest` 単体だと backend/ 直下のモジュールをテストから import できないため、
       # カレントディレクトリを import パスに含める `python -m pytest` で実行する
