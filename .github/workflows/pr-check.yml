@@ -1,0 +1,121 @@
+# PR形式チェック（NFR-12 追記: PR の形式チェック）
+#
+# issue に基づいた PR だけがマージされるよう、以下を検査する。
+# ・ブランチ名が命名規則（feat- / fix- / docs- / chore-）に沿っているか
+# ・「関連issue」に「Closes #番号」があり、その issue が存在して Open か
+# ・「完了条件との対応」のチェックボックスがすべてチェックされているか
+name: PR形式チェック
+
+on:
+  pull_request:
+    branches: [main]
+    # 本文を直したときも再チェックするため、edited を含める
+    types: [opened, edited, synchronize, reopened]
+
+# issue と PR を読むだけなので、読み取り権限のみ与える
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-check:
+    name: PR形式チェック
+    runs-on: ubuntu-latest
+    steps:
+      # PR 本文やブランチ名は PR 作成者が自由に書ける値のため、
+      # ${{ }} でスクリプトに直接埋め込まず、context.payload から読む（スクリプト注入対策）
+      - name: PR の形式を検査
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const errors = [];
+
+            // HTML コメントは PR 画面に表示されないため、除外してから判定する
+            const body = (pr.body ?? '').replace(/<!--[\s\S]*?-->/g, '');
+
+            // 指定した見出し（## ○○）から次の見出しまでの行を返す。見出しが無ければ null
+            // 本文の他の欄（テストの説明など）にある記述を誤って拾わないよう、欄ごとに判定するために使う
+            const getSection = (heading) => {
+              const lines = body.split(/\r?\n/);
+              const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
+              if (start === -1) return null;
+              const sectionLines = [];
+              for (const line of lines.slice(start + 1)) {
+                if (line.startsWith('## ')) break;
+                sectionLines.push(line);
+              }
+              return sectionLines;
+            };
+
+            // 1. ブランチ名
+            // 命名ルールの例（feat-REQ-04-order-confirm）に大文字が含まれるため、大文字も許可する
+            const BRANCH_PATTERN = /^(feat|fix|docs|chore)-[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
+            const branch = pr.head.ref;
+            if (!BRANCH_PATTERN.test(branch)) {
+              errors.push(`ブランチ名「${branch}」が命名規則（feat- / fix- / docs- / chore-）に沿っていません`);
+            }
+
+            // 2. 関連 issue の記載
+            // 表記を統一するため、PR テンプレートと同じ「Closes」のみ認める
+            const relatedSection = getSection('関連issue');
+            const issueNumbers = relatedSection === null
+              ? []
+              : [...relatedSection.join('\n').matchAll(/\bCloses #(\d+)\b/g)].map((match) => Number(match[1]));
+            if (relatedSection === null) {
+              errors.push('「## 関連issue」の見出しがありません');
+            } else if (issueNumbers.length === 0) {
+              errors.push('「関連issue」に「Closes #番号」がありません');
+            }
+
+            // 3. issue の実在と状態
+            for (const number of issueNumbers) {
+              try {
+                const { data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: number,
+                });
+                // GitHub の API では PR も issue として返るため、明示的に区別する
+                if (issue.pull_request) {
+                  errors.push(`#${number} は issue ではなく PR です`);
+                } else if (issue.state !== 'open') {
+                  errors.push(`#${number} は Close 済みです`);
+                }
+              } catch (error) {
+                // 404: 存在しない、410: 削除・移動済み
+                if (error.status === 404 || error.status === 410) {
+                  errors.push(`#${number} の issue が存在しません`);
+                } else {
+                  throw error;
+                }
+              }
+            }
+
+            // 4. 完了条件のチェックボックス
+            // 本文の他の欄にあるチェックボックスを巻き込まないよう、この見出しの中だけを対象にする
+            const doneSection = getSection('完了条件との対応');
+            if (doneSection === null) {
+              errors.push('「## 完了条件との対応」の見出しがありません');
+            } else {
+              const checked = doneSection.filter((line) => /^\s*[-*] \[[xX]\]/.test(line)).length;
+              const unchecked = doneSection.filter((line) => /^\s*[-*] \[ \]/.test(line)).length;
+              // 欄ごと消された場合に素通りしないよう、チェックボックスが無いことも失敗とする
+              if (checked + unchecked === 0) {
+                errors.push('「完了条件との対応」にチェックボックスがありません');
+              } else if (unchecked > 0) {
+                errors.push(`「完了条件との対応」に未チェックの項目が ${unchecked} 件あります`);
+              }
+            }
+
+            // 直す回数を減らすため、最初の1件で止めずにすべてまとめて表示する
+            if (errors.length > 0) {
+              core.setFailed(['PR の形式に問題があります。', ...errors.map((e) => `・${e}`)].join('\n'));
+            } else {
+              core.info('PR の形式チェックはすべて合格しました');
+            }
