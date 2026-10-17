@@ -5,3 +5,14 @@ uvicorn[standard]==0.54.0
 # テスト（CI の python -m pytest で使用。httpx2 は FastAPI の TestClient が利用する）
 pytest==9.1.1
 httpx2==2.13.1
+
+# 再現性のため、直接利用するライブラリはバージョンを固定する
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+
+# テスト（CI の python -m pytest で使用。httpx2 は FastAPI の TestClient が利用する）
+pytest==9.1.1
+httpx2==2.13.1
+
+# lint・フォーマットチェック（CI で使用。ルールは ruff.toml で管理する）
+ruff==0.17.1
