@@ -1,0 +1,42 @@
+name: タスク
+description: タスク管理書に基づく実装タスク
+title: "[Task] "
+labels: ["task"]
+body:
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+      description: なぜこのタスクが必要なのか（関連する要件・経緯など）
+    validations:
+      required: true
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 目的
+      description: このタスクで何を実現するか
+    validations:
+      required: true
+
+  - type: textarea
+    id: done-criteria
+    attributes:
+      label: 完了条件
+      description: 何ができたら完了とするか。確認できる形で書く
+      placeholder: |
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: changed-files
+    attributes:
+      label: 変更ファイル
+      description: 変更予定・変更したファイル（作成時点で未定なら空欄でOK）
+      placeholder: |
+        - backend/app/...
+        - frontend/src/...
+    validations:
+      required: false
