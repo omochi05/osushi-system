@@ -2,7 +2,7 @@
 #
 # issue に基づいた PR だけがマージされるよう、以下を検査する。
 # ・ブランチ名が命名規則（feat- / fix- / docs- / chore-）に沿っているか
-# ・本文に「Closes #番号」があり、その issue が存在して Open か
+# ・「関連issue」に「Closes #番号」があり、その issue が存在して Open か
 # ・「完了条件との対応」のチェックボックスがすべてチェックされているか
 name: PR形式チェック
 
@@ -39,6 +39,20 @@ jobs:
             // HTML コメントは PR 画面に表示されないため、除外してから判定する
             const body = (pr.body ?? '').replace(/<!--[\s\S]*?-->/g, '');
 
+            // 指定した見出し（## ○○）から次の見出しまでの行を返す。見出しが無ければ null
+            // 本文の他の欄（テストの説明など）にある記述を誤って拾わないよう、欄ごとに判定するために使う
+            const getSection = (heading) => {
+              const lines = body.split(/\r?\n/);
+              const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
+              if (start === -1) return null;
+              const sectionLines = [];
+              for (const line of lines.slice(start + 1)) {
+                if (line.startsWith('## ')) break;
+                sectionLines.push(line);
+              }
+              return sectionLines;
+            };
+
             // 1. ブランチ名
             // 命名ルールの例（feat-REQ-04-order-confirm）に大文字が含まれるため、大文字も許可する
             const BRANCH_PATTERN = /^(feat|fix|docs|chore)-[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
@@ -49,9 +63,14 @@ jobs:
 
             // 2. 関連 issue の記載
             // 表記を統一するため、PR テンプレートと同じ「Closes」のみ認める
-            const issueNumbers = [...body.matchAll(/\bCloses #(\d+)\b/g)].map((match) => Number(match[1]));
-            if (issueNumbers.length === 0) {
-              errors.push('本文に「Closes #番号」がありません');
+            const relatedSection = getSection('関連issue');
+            const issueNumbers = relatedSection === null
+              ? []
+              : [...relatedSection.join('\n').matchAll(/\bCloses #(\d+)\b/g)].map((match) => Number(match[1]));
+            if (relatedSection === null) {
+              errors.push('「## 関連issue」の見出しがありません');
+            } else if (issueNumbers.length === 0) {
+              errors.push('「関連issue」に「Closes #番号」がありません');
             }
 
             // 3. issue の実在と状態
@@ -80,18 +99,12 @@ jobs:
 
             // 4. 完了条件のチェックボックス
             // 本文の他の欄にあるチェックボックスを巻き込まないよう、この見出しの中だけを対象にする
-            const lines = body.split(/\r?\n/);
-            const start = lines.findIndex((line) => line.trim() === '## 完了条件との対応');
-            if (start === -1) {
+            const doneSection = getSection('完了条件との対応');
+            if (doneSection === null) {
               errors.push('「## 完了条件との対応」の見出しがありません');
             } else {
-              const sectionLines = [];
-              for (const line of lines.slice(start + 1)) {
-                if (line.startsWith('## ')) break;
-                sectionLines.push(line);
-              }
-              const checked = sectionLines.filter((line) => /^\s*[-*] \[[xX]\]/.test(line)).length;
-              const unchecked = sectionLines.filter((line) => /^\s*[-*] \[ \]/.test(line)).length;
+              const checked = doneSection.filter((line) => /^\s*[-*] \[[xX]\]/.test(line)).length;
+              const unchecked = doneSection.filter((line) => /^\s*[-*] \[ \]/.test(line)).length;
               // 欄ごと消された場合に素通りしないよう、チェックボックスが無いことも失敗とする
               if (checked + unchecked === 0) {
                 errors.push('「完了条件との対応」にチェックボックスがありません');
