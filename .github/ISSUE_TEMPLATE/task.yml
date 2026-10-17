@@ -2,7 +2,19 @@ name: タスク
 description: タスク管理書に基づく実装タスク
 title: "[Task] "
 labels: ["task"]
+projects: ["omochi05/1"]
 body:
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 優先度
+      options:
+        - 高
+        - 中
+        - 低
+    validations:
+      required: true
+
   - type: textarea
     id: background
     attributes:
