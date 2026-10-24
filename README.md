@@ -49,7 +49,7 @@
 | データベース | MySQL | 8.4 |
 | 実行環境 | Docker Compose（フロントエンド・API・DB） | - |
 | 変更管理 | Git / GitHub | - |
-| CI | GitHub Actions（想定） | - |
+| CI | GitHub Actions | - |
 
 ## ディレクトリ構成
 
@@ -231,8 +231,22 @@ Closes #12
 ## ブランチ運用
 
 - 作業ブランチは必ず最新の `main` から作成する
-- `main` への反映は Pull Request 経由で行い、`main` へ直接 push しない
+- `main` への反映は Pull Request 経由で行う（`main` への直接 push は保護ルールにより拒否される）
 - 内容が固まりきっていない変更は Draft Pull Request で共有する
+
+### main ブランチの保護
+
+`main` には GitHub の Ruleset（`main-protection`）を設定しています。オーナーを含め、全員に適用されます。
+
+| ルール | 内容 |
+| --- | --- |
+| Pull Request 必須 | `main` への直接 push はできません。変更はすべて Pull Request 経由でマージします |
+| 必須チェック | 次のチェックがすべて成功しないとマージできません<br>・`Frontend（lint・型検査・ビルド）`<br>・`Backend（lint・テスト）`<br>・`PR形式チェック` |
+| 削除・強制 push の禁止 | `main` の削除と force push はできません |
+| レビュー承認 | 現在は必須にしていません |
+
+- `main` に直接 push しようとすると `GH013: Repository rule violations found` と表示されて拒否されます。作業ブランチを作成し、Pull Request からマージしてください。
+- CI のジョブ名を変更すると必須チェックと一致しなくなり、Pull Request がマージできなくなります。ジョブ名を変える場合は、GitHub の Settings → Rules → Rulesets の必須チェックもあわせて更新してください。
 
 ### ブランチ名
 
@@ -289,28 +303,60 @@ git branch -d feat-REQ-04-order-confirm
 
 ## CI
 
-GitHub Actions（`.github/workflows/ci.yml`）で、`main` 向けの Pull Request と `main` への push のたびに次のチェックを実行します（NFR-12）。
+GitHub Actions で、`main` 向けの Pull Request ごとに次のチェックを実行します（NFR-12）。すべて成功しないと `main` にマージできません（「main ブランチの保護」を参照）。
 
-| ジョブ | 実行内容 | 実行されるための前提 |
-| --- | --- | --- |
-| Frontend | `npm ci` → `npm run typecheck` → `npm run build` | `frontend/package.json`・`frontend/package-lock.json`・`frontend/.nvmrc` があり、`package.json` に `typecheck` と `build` スクリプトが定義されている |
-| Backend | `pip install -r requirements.txt` → `python -m pytest` | `backend/requirements.txt`（pytest を含む）・`backend/.python-version` がある |
+| ワークフロー | ジョブ | 実行内容 | 実行タイミング |
+| --- | --- | --- | --- |
+| `ci.yml` | Frontend（lint・型検査・ビルド） | `npm ci` → `npm run lint` → `npm run typecheck` → `npm run build` | `main` 向け Pull Request、`main` への push |
+| `ci.yml` | Backend（lint・テスト） | `pip install -r requirements.txt` → `ruff check .` → `ruff format --check .` → `python -m pytest` | `main` 向け Pull Request、`main` への push |
+| `pr-check.yml` | PR形式チェック | ブランチ名・関連 issue・完了条件のチェック状況を検査 | `main` 向け Pull Request の作成・本文編集・push・再オープン |
 
+### Frontend・Backend の前提
+
+- Frontend は `frontend/package.json`・`frontend/package-lock.json`・`frontend/.nvmrc` があり、`package.json` に `lint`・`typecheck`・`build` スクリプトが定義されている必要があります。
+- Backend は `backend/requirements.txt`（pytest・ruff を含む）・`backend/.python-version` が必要です。
 - Node と Python のバージョンは、それぞれ `frontend/.nvmrc` と `backend/.python-version` で管理し、CI もその値を使います。
 - `frontend/package.json` または `backend/requirements.txt` が無い場合は、該当ジョブのチェックをスキップし、実行結果の画面に notice を表示します。
 - pytest はテストが1件も無いと失敗します。`backend/tests/` のテストは削除しないでください。
 - フロントエンドにライブラリを追加したときは、`package.json` と `package-lock.json` を一緒にコミットしてください（CI の `npm ci` はロックファイルどおりにインストールします）。
 - バックエンドにライブラリを追加したときは、`requirements.txt` にバージョンを固定して追記してください（例: `fastapi==0.143.0`）。
 
+### lint・フォーマット
+
+| 対象 | ツール | 設定ファイル |
+| --- | --- | --- |
+| Frontend | oxlint | `frontend/.oxlintrc.json` |
+| Backend | ruff | `backend/ruff.toml` |
+
+Backend でフォーマットチェックに失敗した場合は、次のコマンドで整形できます。
+
+```bash
+docker compose exec backend ruff format .
+```
+
+### PR形式チェック
+
+Pull Request の本文とブランチ名を検査し、次のいずれかに当てはまると失敗します。問題はまとめて表示され、本文を編集すると自動で再実行されます。
+
+| 検査項目 | 失敗する条件 |
+| --- | --- |
+| ブランチ名 | `feat-` / `fix-` / `docs-` / `chore-` で始まる命名規則に沿っていない（「ブランチ名」を参照） |
+| 関連 issue | 「## 関連issue」の欄に `Closes #番号` が無い |
+| issue の状態 | 指定した番号の issue が存在しない、Close 済み、または Pull Request の番号である |
+| 完了条件 | 「## 完了条件との対応」の欄が無い、チェックボックスが無い、または未チェックの項目がある |
+
+- issue の紐づけは `Closes` だけを使います（`Fixes`・`Resolves` は認識しません）。
+- 見出しの文言（`## 関連issue`・`## 完了条件との対応`）で欄を判定しているため、PR テンプレートの見出しは変更しないでください。
+
 ### 手元で CI と同じチェックを実行する
 
-push する前に、Docker 上で同じチェックを実行できます（`.env` の作成が必要です）。
+push する前に、Docker 上で Frontend・Backend と同じチェック（lint・型検査・ビルド・テスト）を実行できます（`.env` の作成が必要です）。
 
 ```bash
 bash scripts/ci.sh
 ```
 
-最後に `すべてのチェックが成功しました` と表示されれば成功です。
+最後に `すべてのチェックが成功しました` と表示されれば成功です。PR形式チェックは Pull Request の情報を使うため、手元では実行できません。
 
 ## トラブルシューティング
 
