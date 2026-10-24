@@ -19,10 +19,12 @@ fi
 echo "==> イメージをビルド（依存関係の変更を反映）"
 docker compose build frontend backend
 
-echo "==> Frontend: 型検査・ビルド"
-docker compose run --rm --no-deps frontend sh -c "npm run typecheck && npm run build"
+# CI と同じく、時間のかかる型検査・ビルドより先に lint を実行する
+echo "==> Frontend: lint・型検査・ビルド"
+docker compose run --rm --no-deps frontend sh -c "npm run lint && npm run typecheck && npm run build"
 
-echo "==> Backend: テスト"
-docker compose run --rm --no-deps backend python -m pytest
+# ルールは backend/ruff.toml で管理する（CI と同じ設定を使う）
+echo "==> Backend: lint・フォーマットチェック・テスト"
+docker compose run --rm --no-deps backend sh -c "ruff check . && ruff format --check . && python -m pytest"
 
 echo "==> すべてのチェックが成功しました"
